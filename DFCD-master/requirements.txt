@@ -1,0 +1,28 @@
+# Python 3.12 兼容依赖
+# 安装: pip install -r requirements.txt
+# torch_sparse 需单独按 PyTorch/CUDA 安装，见下方说明
+
+# 核心
+numpy>=2.0.0,<3
+pandas>=2.0.0
+scikit-learn>=1.3.0,<2
+joblib>=1.3.0
+tqdm>=4.65.0
+
+# PyTorch（Python 3.12 请用 torch>=2.4）
+torch>=2.4.0
+torch_geometric>=2.6.0
+# torch_sparse（必选，用于 SparseTensor）需从 PyG 安装，例如 PyTorch 2.4 + CUDA 12.1:
+#   pip install torch_sparse -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
+# 其他组合见: https://pytorch-geometric.readthedocs.io/en/latest/install/installation.html
+
+# 嵌入与 LangChain（使用 langchain_community.embeddings.OpenAIEmbeddings）
+openai>=1.0.0
+langchain-core>=0.2.0
+langchain-community>=0.2.0
+python-dotenv>=1.0.0
+
+# 可选嵌入后端（生成 embedding_*.pkl 时按需选用）
+FlagEmbedding>=1.3.0
+InstructorEmbedding>=1.0.0
+sentence-transformers>=3.0.0

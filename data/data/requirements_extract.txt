@@ -1,0 +1,2 @@
+# 仅用于 extract_questions_deepseek.py
+requests>=2.28.0
