@@ -162,6 +162,12 @@ def main_ddp(rank, world_size, config_template):
 
     model = DFCD(config)
     model = model.to(config["device"])
+    # GNN 中 TransformerConv 等使用 in_channels=-1 延迟初始化，DDP 要求参数已初始化，先跑一次 dummy forward
+    model.train()
+    with torch.no_grad():
+        one_batch = next(iter(config["train_dataloader"]))
+        student_id, exercise_id, knowledge_point, _ = [t.to(config["device"]) for t in one_batch]
+        _ = model(student_id, exercise_id, knowledge_point)
     model = DDP(model, device_ids=[rank], output_device=rank)
 
     optimizer = optim.Adam(
