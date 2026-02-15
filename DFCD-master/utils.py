@@ -141,7 +141,12 @@ def load_data(config):
             print("[load_data] 已按学生划分并写入本地: {} (train: {} 条, test: {} 条)".format(
                 split_dir, len(np_train), len(np_test)))
     else:
-        np_train, np_test = train_test_split(np_data, test_size=config['test_size'], random_state=config['seed'])
+        test_size = config['test_size']
+        if test_size is not None and float(test_size) <= 0:
+            np_train = np_data
+            np_test = np.array([]).reshape(0, np_data.shape[1])
+        else:
+            np_train, np_test = train_test_split(np_data, test_size=test_size, random_state=config['seed'])
 
     if config['split'] == 'Exer':
         train_exer = np.random.choice(np.arange(config['prob_num']),
@@ -161,7 +166,8 @@ def load_data(config):
         config['np_train_new'] = np_train[~np.isin(np_train[:, 1], config['exist_idx'])]
         config['new_idx'] = np.setdiff1d(np.arange(config['prob_num']), train_exer).tolist()
     else:
-        np_train, np_test = train_test_split(np_data, test_size=config['test_size'], random_state=config['seed'])
+        if config.get('test_size') is None or float(config['test_size']) > 0:
+            np_train, np_test = train_test_split(np_data, test_size=config['test_size'], random_state=config['seed'])
 
     # Update config with loaded data
     config.update({
@@ -176,14 +182,19 @@ def load_data(config):
 
 
 def get_dataloader(config):
+    dtype = config.get('dtype', torch.float64)
     if config['split'] == 'Stu' or config['split'] == 'Exer' or config['split'] == 'Know':
-        train_dataloader, test_dataloader = [
-        transform(config['q'], _[:, 0], _[:, 1], _[:, 2], config['batch_size'])
-        for _ in [config['np_train_old'], config['np_test']]]
+        train_arr, test_arr = config['np_train_old'], config['np_test']
     else:
-        train_dataloader, test_dataloader = [
-        transform(config['q'], _[:, 0], _[:, 1], _[:, 2], config['batch_size'])
-        for _ in [config['np_train'], config['np_test']]]
+        train_arr, test_arr = config['np_train'], config['np_test']
+
+    train_dataloader = transform(config['q'], train_arr[:, 0], train_arr[:, 1], train_arr[:, 2], config['batch_size'], dtype)
+    if len(test_arr) > 0:
+        test_dataloader = transform(config['q'], test_arr[:, 0], test_arr[:, 1], test_arr[:, 2], config['batch_size'], dtype)
+    else:
+        # 空测试集时创建占位 DataLoader，避免 RandomSampler(num_samples=0) 报错
+        dummy = np.array([[0, 0, 0]], dtype=np.int64)
+        test_dataloader = transform(config['q'], dummy[:, 0], dummy[:, 1], dummy[:, 2], config['batch_size'], dtype)
     return train_dataloader, test_dataloader
 
 def get_top_k_concepts(datatype: str, topk: int = 10, data_dir: str = None):

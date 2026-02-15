@@ -2,7 +2,7 @@
 """
 2020 数据集嵌入：从 data/2020/ 读入，使用远端 Embedding API 生成向量，写出 embedding_*.pkl。
 
-- 数据来源：DFCD-master/data/2020/（TotalData.csv, q.csv, map.pkl, question_texts.csv 列 id/content）
+- 数据来源：DFCD-master/data/2020/（TotalData.csv, q.csv, map.pkl, question_texts.csv 等）
 - Embedding：仅使用远端 API（与 embedding_helper 一致），POST {url}/embedding/，请求体 {"input": [...], "model": "..."}
 - 配置：.env 中 EMBEDDING_SERVICE_URL、EMBEDDING_MODEL
 """
@@ -232,18 +232,16 @@ def _build_texts_from_convert_format():
     ]
     config = {"knowledge_text": knowledge_text}
 
-    # 题目文本：question_texts.csv，列 id（image 去掉 .jpg）、content（question + 选项）
     path_qt = os.path.join(DATA_OUT, "question_texts.csv")
     if not os.path.isfile(path_qt):
         raise FileNotFoundError("data/2020/ 下缺少 question_texts.csv，请先运行 convert_to_dfcd.py 并拷贝到 data/2020/")
-    qt = pd.read_csv(path_qt)
-    if "content" not in qt.columns:
-        raise ValueError("question_texts.csv 需包含 content 列（id 与 content 由 convert_to_dfcd 生成）")
-    exercise_text = qt["content"].fillna("").astype(str).tolist()
+    qt = pd.read_csv(path_qt).sort_values("exercise_id")
+    if "text" not in qt.columns:
+        raise ValueError("question_texts.csv 需包含 text 列")
+    exercise_text = qt["text"].fillna("").astype(str).tolist()
     if len(exercise_text) != prob_num:
-        raise ValueError("题目文本行数 %d 与题目数 %d（q.csv）不一致" % (len(exercise_text), prob_num))
+        raise ValueError("question_texts 行数 %d 与题目数 %d 不一致" % (len(exercise_text), prob_num))
     config["exercise_text"] = exercise_text
-    exer_to_text = dict(enumerate(exercise_text))
 
     def concept_names_for_exer(exer_id):
         row = q_np[exer_id]
@@ -256,6 +254,7 @@ def _build_texts_from_convert_format():
 
     prompt_right = "I was asked the question: {question}.\nAnd this question is about: {Name}.\nAnd I give the correct answer."
     prompt_wrong = "I was asked the question: {question}.\nAnd this question is about: {Name}.\nBut I give the wrong answer."
+    exer_to_text = dict(zip(qt["exercise_id"], qt["text"].fillna("").astype(str)))
 
     student_text = []
     for stu_id in tqdm(range(stu_num), desc="Building student text"):
