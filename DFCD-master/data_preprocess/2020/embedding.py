@@ -2,7 +2,7 @@
 """
 2020 数据集嵌入：从 data/2020/ 读入，使用远端 Embedding API 生成向量，写出 embedding_*.pkl。
 
-- 数据来源：DFCD-master/data/2020/（TotalData.csv, q.csv, map.pkl, question_texts.csv 等）
+- 数据来源：DFCD-master/data/2020/（TotalData.csv, q.csv, map.pkl, question_texts.csv 列 id/content）
 - Embedding：仅使用远端 API（与 embedding_helper 一致），POST {url}/embedding/，请求体 {"input": [...], "model": "..."}
 - 配置：.env 中 EMBEDDING_SERVICE_URL、EMBEDDING_MODEL
 """
@@ -30,6 +30,8 @@ REMOTE_EMBED_BATCH_SIZE = int(os.getenv("REMOTE_EMBED_BATCH_SIZE", "64"))
 REMOTE_EMBED_MAX_WORKERS = int(os.getenv("REMOTE_EMBED_MAX_WORKERS", "64"))
 # 单批请求失败时的重试次数（SSL/网络抖动时可自动重试）
 REMOTE_EMBED_RETRIES = int(os.getenv("REMOTE_EMBED_RETRIES", "3"))
+# 启动前连通性测试超时（秒），0 表示跳过
+REMOTE_EMBED_PREFLIGHT_TIMEOUT = int(os.getenv("REMOTE_EMBED_PREFLIGHT_TIMEOUT", "15"))
 # ============================================================================
 
 # 断点续跑：任务状态与每批输入/输出存放目录（在 result/embedding 下）
@@ -43,6 +45,23 @@ DATASET = "2020"
 _DATA_PREPROCESS_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_OUT = os.path.join(os.path.dirname(_DATA_PREPROCESS_ROOT), "data", DATASET)
 RESULT_EMBED = os.path.join(os.path.dirname(__file__), "result", "embedding")
+
+
+def _test_connectivity(url: str, model: str, timeout: int = 15) -> bool:
+    """启动前测试远端 API 是否可达，返回 True 表示可连通。"""
+    if timeout <= 0:
+        return True
+    payload = {"input": ["test"], "model": model}
+    try:
+        resp = requests.post(url, json=payload, headers=DEFAULT_HEADERS, timeout=timeout)
+        resp.raise_for_status()
+        return True
+    except Exception as e:
+        print(f"[预检失败] 无法连接 {url}")
+        print(f"  异常: {type(e).__name__}: {e}")
+        print("  可能原因: 新设备网络/防火墙/DNS/代理不同，或 EMBEDDING_SERVICE_URL 不可达")
+        print("  建议: 1) 浏览器访问 EMBEDDING_SERVICE_URL 测试 2) 设 REMOTE_EMBED_MAX_WORKERS=1 降低并发 3) 检查 .env")
+        return False
 
 
 def _embed_one_batch(batch: list, model: str, url: str) -> list:
@@ -232,16 +251,18 @@ def _build_texts_from_convert_format():
     ]
     config = {"knowledge_text": knowledge_text}
 
+    # 题目文本：question_texts.csv，列 id（image 去掉 .jpg）、content（question + 选项）
     path_qt = os.path.join(DATA_OUT, "question_texts.csv")
     if not os.path.isfile(path_qt):
         raise FileNotFoundError("data/2020/ 下缺少 question_texts.csv，请先运行 convert_to_dfcd.py 并拷贝到 data/2020/")
-    qt = pd.read_csv(path_qt).sort_values("exercise_id")
-    if "text" not in qt.columns:
-        raise ValueError("question_texts.csv 需包含 text 列")
-    exercise_text = qt["text"].fillna("").astype(str).tolist()
+    qt = pd.read_csv(path_qt)
+    if "content" not in qt.columns:
+        raise ValueError("question_texts.csv 需包含 content 列（id 与 content 由 convert_to_dfcd 生成）")
+    exercise_text = qt["content"].fillna("").astype(str).tolist()
     if len(exercise_text) != prob_num:
-        raise ValueError("question_texts 行数 %d 与题目数 %d 不一致" % (len(exercise_text), prob_num))
+        raise ValueError("题目文本行数 %d 与题目数 %d（q.csv）不一致" % (len(exercise_text), prob_num))
     config["exercise_text"] = exercise_text
+    exer_to_text = dict(enumerate(exercise_text))
 
     def concept_names_for_exer(exer_id):
         row = q_np[exer_id]
@@ -254,7 +275,6 @@ def _build_texts_from_convert_format():
 
     prompt_right = "I was asked the question: {question}.\nAnd this question is about: {Name}.\nAnd I give the correct answer."
     prompt_wrong = "I was asked the question: {question}.\nAnd this question is about: {Name}.\nBut I give the wrong answer."
-    exer_to_text = dict(zip(qt["exercise_id"], qt["text"].fillna("").astype(str)))
 
     student_text = []
     for stu_id in tqdm(range(stu_num), desc="Building student text"):
@@ -315,6 +335,11 @@ def _generate_embeddings_remote(config):
         print("批次写入完成。开始请求远端 API，每完成一批会更新进度并保存。")
 
     print("使用远端 Embedding API:", EMBEDDING_SERVICE_URL, "模型:", model, "并发:", max_workers, "线程")
+    if REMOTE_EMBED_PREFLIGHT_TIMEOUT > 0:
+        print("正在预检网络连通性（约 %d 秒）..." % REMOTE_EMBED_PREFLIGHT_TIMEOUT)
+        if not _test_connectivity(url, model, REMOTE_EMBED_PREFLIGHT_TIMEOUT):
+            raise RuntimeError("预检失败，请检查网络与 EMBEDDING_SERVICE_URL 后重试。")
+        print("预检通过。")
 
     config["knowledge_embeddings"] = _run_stage_resumable("knowledge", n_k, "knowledge 嵌入", model, url, max_workers)
     config["exercise_embeddings"] = _run_stage_resumable("exercise", n_e, "exercise 嵌入", model, url, max_workers)
