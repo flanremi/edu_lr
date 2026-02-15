@@ -46,12 +46,14 @@ def _make_ddp_dataloader(config, world_size):
     sampler = DistributedSampler(
         dataset, num_replicas=world_size, rank=dist.get_rank(), shuffle=True
     )
+    # pin_memory=False：数据集含 q[item,:] 来自 config['q']（已在 GPU），CPU tensor 才能 pin
+    # num_workers=0：避免与含 CUDA tensor 的 dataset 在多进程中冲突
     return DataLoader(
         dataset,
         batch_size=batch_size,
         sampler=sampler,
-        num_workers=4,
-        pin_memory=True,
+        num_workers=0,
+        pin_memory=False,
     )
 
 
