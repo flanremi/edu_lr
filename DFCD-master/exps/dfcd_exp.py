@@ -57,15 +57,30 @@ EMBEDDING_DIM_MAP = {
 
 
 # ===========================================================================
+# Lazy GNN 初始化（DataParallel 前必须完成，否则 UninitializedParameter 报错）
+# ===========================================================================
+def _init_lazy_gnn(model, train_dataloader, device):
+    """
+    Transformer/GAT 等 GNN 使用 in_channels=-1 懒初始化，需 dummy forward 后才可被 DataParallel 复制。
+    """
+    model.train()
+    batch = next(iter(train_dataloader))
+    student_id, exercise_id, knowledge_point, _ = [d.to(device) for d in batch]
+    with torch.no_grad():
+        _ = model(student_id, exercise_id, knowledge_point, mode='train')
+
+
+# ===========================================================================
 # 多 GPU 设置
 # ===========================================================================
-def setup_device_and_model(model, gpu_str):
+def setup_device_and_model(model, gpu_str, train_dataloader=None):
     """
     根据 --gpus 参数配置设备与 DataParallel。
 
     参数:
       model:   原始模型
       gpu_str: GPU 编号字符串，如 "0" 或 "0,1,2"
+      train_dataloader: 用于懒初始化 GNN 的 dummy forward，多 GPU 时必传
 
     返回:
       model:   可能被 DataParallel 包裹的模型
@@ -80,7 +95,11 @@ def setup_device_and_model(model, gpu_str):
     torch.cuda.set_device(primary_device)
     model = model.to(primary_device)
 
+    # 多 GPU 时，DataParallel 会 replicate 模型，懒初始化 GNN 需在此前完成
     if len(gpu_ids) > 1:
+        if train_dataloader is None:
+            raise ValueError("多 GPU 模式下需传入 train_dataloader 以初始化懒 GNN 层")
+        _init_lazy_gnn(model, train_dataloader, primary_device)
         print(f"[setup] 多 GPU 模式: {gpu_ids} (primary: cuda:{gpu_ids[0]})")
         model = nn.DataParallel(model, device_ids=gpu_ids, output_device=gpu_ids[0])
     else:
@@ -183,10 +202,10 @@ def main(config):
     )
 
     # ================================================================
-    # Step 5: 多 GPU 配置
+    # Step 5: 多 GPU 配置（多卡时需先 dummy forward 初始化懒 GNN 层）
     # ================================================================
     print(f"[main] Step 5: GPU 配置")
-    model, device = setup_device_and_model(model, config['gpus'])
+    model, device = setup_device_and_model(model, config['gpus'], config['train_dataloader'])
 
     # ================================================================
     # Step 6: 优化器
