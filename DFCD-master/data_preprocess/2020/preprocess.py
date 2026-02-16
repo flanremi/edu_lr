@@ -80,7 +80,31 @@ def run(config):
     response_logs = pd.read_csv('../data/2020/merged_data.csv')
     questions = pd.read_csv("../data/2020/question_texts.csv")
 
-    response_logs = response_logs.loc[response_logs['QuestionId'].isin(questions['id'].unique())]
+    # 只保留 content 非空且有效的题目，移除“不存在”的题目（content 缺失或为空）
+    valid_question_ids = set()
+    for _, row in questions.iterrows():
+        qid = row.get('id', row.iloc[0] if len(row) > 0 else None)
+        content = row.get('content', row.iloc[1] if len(row) > 1 else "")
+        if not _is_missing(qid) and not _is_missing(content):
+            try:
+                valid_question_ids.add(int(qid))
+            except (ValueError, TypeError):
+                valid_question_ids.add(qid)
+    all_qids = set()
+    for x in questions['id'].dropna().unique():
+        try:
+            all_qids.add(int(x))
+        except (ValueError, TypeError):
+            all_qids.add(x)
+    excluded = all_qids - valid_question_ids
+    if excluded:
+        try:
+            preview = sorted(excluded)[:20]
+        except TypeError:
+            preview = list(excluded)[:20]
+        print(f'[过滤] 移除 {len(excluded)} 个 content 缺失的题目: {preview}{"..." if len(excluded) > 20 else ""}')
+
+    response_logs = response_logs.loc[response_logs['QuestionId'].isin(valid_question_ids)]
     grouped = response_logs.groupby('UserId').size()
     grouped = grouped.loc[grouped > config['least_respone_num']]
     response_logs = response_logs.loc[response_logs['UserId'].isin(grouped.index)]

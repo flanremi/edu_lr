@@ -14366,12 +14366,6 @@
     ]
   },
   {
-    "image": "674.jpg",
-    "question": "",
-    "options": [],
-    "error": "Expecting value: line 1 column 108 (char 107)"
-  },
-  {
     "image": "665.jpg",
     "question": "Which of these is not a multiple of 21?",
     "options": [

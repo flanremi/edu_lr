@@ -45,10 +45,6 @@ PATH_QUESTIONS_JSON = os.path.join(DIR_DATA, "questions_result.json")
 OUTPUT_DIR = os.path.join(DIR_DATA, "dfcd_format")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# 测试集转换：是否扩展 stu_map 以包含未见学生（测试集中 UserId 不在训练集的学生）
-# True = 扩展，输出 TotalData_test 包含所有学生；False = 仅保留训练集学生，跳过未见学生
-EXTEND_STU_MAP_FOR_TEST = True
-
 # 过滤参数（None 表示不限制）
 STU_NUM = None
 EXER_NUM = None
@@ -220,6 +216,8 @@ def run():
         "info": {"student_num": stu_num, "exercise_num": prob_num, "knowledge_num": know_num},
         "path_validation_csv": PATH_VALIDATION_CSV if PATH_VALIDATION_CSV else None,
     }
+    with open(os.path.join(OUTPUT_DIR, "config.json"), "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
 
     map_data = {
         "stu_map": stu_map,
@@ -286,67 +284,9 @@ def run():
     else:
         print("未找到题目 JSON，跳过 question_texts.csv")
 
-    # 转换验证/测试集为 DFCD 格式
-    stu_num_extended = stu_num
-    if PATH_VALIDATION_CSV and os.path.isfile(PATH_VALIDATION_CSV):
-        print("转换测试集为 DFCD 格式...")
-        test_df = pd.read_csv(PATH_VALIDATION_CSV)
-        for col in ("QuestionId", "UserId", "IsCorrect"):
-            if col not in test_df.columns:
-                print(f"  警告: 测试集缺少 {col} 列，跳过测试集转换")
-                test_df = None
-                break
-        if test_df is not None:
-            test_df["IsCorrect"] = test_df["IsCorrect"].astype(int).clip(0, 1)
-            test_stu_unique = sorted(test_df["UserId"].unique().tolist())
-            unseen_user_ids = [uid for uid in test_stu_unique if uid not in stu_map]
-            stu_map_final = dict(stu_map)
-            if EXTEND_STU_MAP_FOR_TEST and unseen_user_ids:
-                for i, uid in enumerate(unseen_user_ids):
-                    stu_map_final[uid] = stu_num + i
-                stu_num_extended = stu_num + len(unseen_user_ids)
-                print(f"  扩展 stu_map: 新增 {len(unseen_user_ids)} 名未见学生 (stu_id {stu_num}..{stu_num_extended-1})")
-            test_rows = []
-            skipped_qid = 0
-            for _, r in test_df.iterrows():
-                uid, qid, correct = int(r["UserId"]), int(r["QuestionId"]), int(r["IsCorrect"])
-                if uid not in stu_map_final:
-                    continue
-                if qid not in question_map:
-                    skipped_qid += 1
-                    continue
-                test_rows.append([stu_map_final[uid], question_map[qid], correct])
-            if test_rows:
-                test_data = np.array(test_rows, dtype=np.int64)
-                test_out_path = os.path.join(OUTPUT_DIR, "TotalData_test.csv")
-                np.savetxt(test_out_path, test_data, delimiter=",", fmt=["%d", "%d", "%d"])
-                n_test_stu = len(set(test_data[:, 0]))
-                n_test_exer = len(set(test_data[:, 1]))
-                print(f"  TotalData_test.csv: {len(test_data)} 条记录, {n_test_stu} 学生, {n_test_exer} 题目")
-                if skipped_qid > 0:
-                    print(f"  跳过 {skipped_qid} 条（QuestionId 不在训练集 question_map 中）")
-                if stu_num_extended > stu_num:
-                    with open(os.path.join(OUTPUT_DIR, "map.pkl"), "rb") as f:
-                        map_data = pickle.load(f)
-                    map_data["stu_map_extended"] = stu_map_final
-                    map_data["stu_num_extended"] = stu_num_extended
-                    map_data["reverse_stu_map_extended"] = {i: uid for uid, i in stu_map_final.items()}
-                    with open(os.path.join(OUTPUT_DIR, "map.pkl"), "wb") as f:
-                        pickle.dump(map_data, f)
-            else:
-                print("  警告: 测试集转换后无有效记录")
-    else:
-        print("未提供 PATH_VALIDATION_CSV 或文件不存在，跳过测试集转换")
-
-    config["info"]["student_num_extended"] = stu_num_extended
-    with open(os.path.join(OUTPUT_DIR, "config.json"), "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2, ensure_ascii=False)
-
     print("完成。输出目录:", os.path.abspath(OUTPUT_DIR))
-    print("DFCD: 将 TotalData.csv、TotalData_test.csv、q.csv、config.json、map.pkl 复制到 DFCD data/2020/。")
+    print("DFCD: 将 TotalData.csv、q.csv 复制到 DFCD data/<数据集>/。")
     print("data_params_dict: stu_num=%d, prob_num=%d, know_num=%d" % (stu_num, prob_num, know_num))
-    if stu_num_extended > stu_num:
-        print("评估时请使用 stu_num=%d（或依赖 data/2020/config.json 的 student_num_extended 自动生效）" % stu_num_extended)
     if PATH_VALIDATION_CSV:
         print("验证集路径（starter_kit evaluation --ref_data）:", PATH_VALIDATION_CSV)
     return OUTPUT_DIR, stu_num, prob_num, know_num

@@ -14,6 +14,19 @@ import pandas as pd
 from pathlib import Path
 
 
+def _is_missing(val):
+    """判断值是否缺失"""
+    if val is None:
+        return True
+    try:
+        if pd.isna(val):
+            return True
+    except (TypeError, ValueError):
+        pass
+    s = str(val).strip()
+    return len(s) == 0 or s.lower() == 'nan'
+
+
 def parse_subject_ids(subject_str):
     """
     解析 question_metadata 中的 SubjectId 字符串，如 "[3, 71, 98, 209]"
@@ -91,10 +104,30 @@ def main(
     subject_name_map = load_subject_name_map(subject_path)
     print(f"已加载 {len(subject_name_map)} 个 Subject")
 
-    # 2. 加载 question_metadata，构建 QuestionId -> SubjectId
+    # 2. 加载 question_metadata，构建 QuestionId -> SubjectId，并得到有效题目集合
     question_path = data_dir / question_file
     question_subject_map = build_question_subject_map(question_path, use_last=True)
     print(f"已加载 {len(question_subject_map)} 个 Question 的 Subject 映射")
+    valid_question_ids = set(q for q, s in question_subject_map.items() if s in subject_name_map)
+
+    # 2.1 若存在 question_texts.csv，进一步只保留 content 有效的题目
+    qt_path = data_dir / 'question_texts.csv'
+    if qt_path.exists():
+        qt = pd.read_csv(qt_path)
+        qid_col = 'id' if 'id' in qt.columns else qt.columns[0]
+        content_col = 'content' if 'content' in qt.columns else qt.columns[1]
+        qt_valid = set()
+        for _, row in qt.iterrows():
+            qid, content = row[qid_col], row[content_col]
+            if not _is_missing(qid) and not _is_missing(content):
+                try:
+                    qt_valid.add(int(qid))
+                except (ValueError, TypeError):
+                    qt_valid.add(qid)
+        before_qt = len(valid_question_ids)
+        valid_question_ids &= qt_valid
+        if before_qt > len(valid_question_ids):
+            print(f"  按 question_texts 过滤: 保留 {len(valid_question_ids)} 个有有效 content 的题目")
 
     # 3. 加载 train 和 test（仅保留答题相关列）
     train_path = data_dir / train_file
@@ -110,6 +143,19 @@ def main(
     # 4. 合并 train + test
     response_df = pd.concat([train_df, test_df], ignore_index=True)
     print(f"合并后: {len(response_df)} 条")
+
+    # 4.1 移除不存在于 question_metadata 或无法映射到 Subject 的题目相关数据
+    before_filter = len(response_df)
+    excluded_qids = set(response_df['QuestionId'].unique()) - valid_question_ids
+    response_df = response_df.loc[response_df['QuestionId'].isin(valid_question_ids)]
+    removed = before_filter - len(response_df)
+    if removed > 0:
+        try:
+            preview = sorted(excluded_qids)[:15]
+        except TypeError:
+            preview = list(excluded_qids)[:15]
+        print(f"  移除 {removed} 条不存在的题目数据（涉及 {len(excluded_qids)} 个题目，示例: {preview}{'...' if len(excluded_qids) > 15 else ''}）")
+    print(f"过滤后: {len(response_df)} 条")
 
     # 5. 添加 SubjectId 和 Name
     merged = merge_response_data(response_df, question_subject_map, subject_name_map)
