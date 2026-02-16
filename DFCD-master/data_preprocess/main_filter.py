@@ -19,7 +19,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', type=str, default='2020')
     parser.add_argument('--seed', type=int, default=0)
-    parser.add_argument('--stu_num', type=int, default=4000)
+    parser.add_argument('--stu_num', type=int, default=5000)
     parser.add_argument('--exer_num', type=int, default=2000)
     parser.add_argument('--know_num', type=int, default=300)
     parser.add_argument('--least_respone_num', type=int, default=50)
