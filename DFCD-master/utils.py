@@ -61,11 +61,22 @@ def load_data(config):
     config['data_dir'] = data_dir
 
     from data.data_params_dict import data_params
+    data_dir_typed = os.path.join(data_dir, config["data_type"])
     config.update({
         'stu_num': data_params[config["data_type"]]['stu_num'],
         'prob_num': data_params[config["data_type"]]['prob_num'],
         'know_num': data_params[config["data_type"]]['know_num'],
     })
+    # 若存在 config.json 且含 student_num_extended，且启用了外部测试集，则使用扩展后的 stu_num
+    if config.get('test_csv'):
+        import json
+        cfg_path = os.path.join(data_dir_typed, 'config.json')
+        if os.path.isfile(cfg_path):
+            with open(cfg_path, 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+            ext = cfg.get('info', {}).get('student_num_extended')
+            if ext is not None and ext > config['stu_num']:
+                config['stu_num'] = int(ext)
 
     import pickle
     with open(os.path.join(data_dir, config["data_type"], 'embedding_{}.pkl'.format(config["text_embedding_model"])), 'rb') as file:
@@ -90,6 +101,7 @@ def load_data(config):
             se_map[stu_id][log[1]] = cnt
             cnt += 1
     config['se_map'] = se_map
+    # 注意：若存在扩展学生（stu_id >= len(np_data 中的学生)），se_map 由后续加载 np_test 后补充
 
     # 按学生划分：优先从本地物理分割目录加载，否则在内存划分并落盘（物理隔绝）
     if config['split'] == 'Stu':
@@ -144,7 +156,25 @@ def load_data(config):
         test_size = config['test_size']
         if test_size is not None and float(test_size) <= 0:
             np_train = np_data
-            np_test = np.array([]).reshape(0, np_data.shape[1])
+            # 支持外部测试集：config['test_csv'] 指定文件名（在 data/<data_type>/ 下）
+            test_csv = config.get('test_csv')
+            if test_csv:
+                test_csv_path = os.path.join(data_dir, config["data_type"], test_csv)
+                if os.path.isfile(test_csv_path):
+                    np_test = pd.read_csv(test_csv_path, header=None).to_numpy()
+                    # 为扩展学生（仅出现在测试集中）补充 se_map
+                    for i in range(np_test.shape[0]):
+                        s, p = int(np_test[i, 0]), int(np_test[i, 1])
+                        if s not in config['se_map']:
+                            config['se_map'][s] = {}
+                        if p not in config['se_map'][s]:
+                            config['se_map'][s][p] = len(config['se_map'][s])
+                    print("[load_data] 已加载外部测试集: {} ({} 条)".format(test_csv_path, len(np_test)))
+                else:
+                    print("[load_data] 警告: 外部测试集文件不存在: {}".format(test_csv_path))
+                    np_test = np.array([]).reshape(0, np_data.shape[1])
+            else:
+                np_test = np.array([]).reshape(0, np_data.shape[1])
         else:
             np_train, np_test = train_test_split(np_data, test_size=test_size, random_state=config['seed'])
 

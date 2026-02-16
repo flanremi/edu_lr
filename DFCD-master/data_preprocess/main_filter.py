@@ -17,7 +17,7 @@ def params_parser(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', type=str, choices=['XES3G5M', 'NeurIPS2020', 'MOOCRadar', '2020'], required=True)
+    parser.add_argument('--dataset', type=str, default='2020')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--stu_num', type=int, default=4000)
     parser.add_argument('--exer_num', type=int, default=2000)

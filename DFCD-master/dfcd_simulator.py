@@ -59,7 +59,7 @@ def _build_full_config(config):
         c["in_channels_llm"] = 1536
     elif text_emb == "BAAI":
         c["in_channels_llm"] = 1024
-    elif text_emb in ("m3e", "instructor"):
+    elif text_emb in ("m3e", "instructor", "remote"):
         c["in_channels_llm"] = 768
     else:
         c["in_channels_llm"] = 1536

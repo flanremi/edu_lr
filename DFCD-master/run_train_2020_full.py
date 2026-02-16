@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-2020 训练入口：使用 100% 训练集，不划分验证集。
-用于合并 85/15 分割后，将全部数据用于训练；验证在训练结束后用外部验证集单独执行。
+2020 训练入口：使用 100% 训练集 + 外部测试集，每 epoch 评估。
+
+训练集：data/2020/TotalData.csv（全量）
+测试集：data/2020/TotalData_test.csv（由 convert_to_dfcd.py 从 test_public_task_4_more_splits.csv 转换）
 
 运行方式：
   单卡：  python run_train_2020_full.py
   多卡：  python run_train_2020_full.py   # 自动检测 GPU 数并用 DDP
+
+模型保存：训练结束后权重写入本脚本同目录下的 dfcd_2020_full.pt（可由 SAVE_PATH 修改）。
 """
 import sys
 import os
@@ -23,30 +27,40 @@ import run_config
 from utils import load_data, construct_data_geometric
 from models.dfcd import DFCD
 
-# 覆盖为 2020 + 100% 训练（不划分验证集）
+# 训练结束后保存权重的路径（None 则不保存）
+SAVE_PATH = os.path.join(_SCRIPT_DIR, "dfcd_2020_full.pt")
+
+# 覆盖为 2020 + 100% 训练 + 外部测试集
 run_config.CONFIG.update({
     "data_type": "2020",
     "data_root": _SCRIPT_DIR,
-    "test_size": 0.0,            # 0% 验证，全部用于训练
-    "split": "Original",         # 使用 train_test_split，test_size=0 即全量训练
+    "test_size": 0.0,            # 不从训练集划分
+    "split": "Original",
     "text_embedding_model": "remote",
+    "test_csv": "TotalData_test.csv",  # 外部测试集（在 data/2020/ 下）
     "epoch": 20,
     "lr": 1e-4,
-    "batch_size": 1024,
+    "batch_size": 512,
     "seed": 0,
     "device": "cuda:0",
+    "dtype": torch.float32,
+    "save_path": SAVE_PATH,
 })
 
 
-def train_only_loop(model, config):
-    """仅训练，不执行 test_step（单卡）。"""
+def train_with_test_loop(model, config):
+    """训练 + 每 epoch 评估（单卡）。有测试集时调 test_step，无则只打印 loss。"""
+    has_test = config.get("np_test") is not None and len(config["np_test"]) > 0
+    all_epoch = config["epoch"]
     model.train()
     optimizer = optim.Adam(
         model.parameters(),
         lr=config["lr"],
         weight_decay=config.get("weight_decay", 0),
     )
-    for epoch_i in range(config["epoch"]):
+    best_auc = 0
+    for epoch_i in range(all_epoch):
+        model.train()
         epoch_losses = []
         for batch_data in tqdm(config["train_dataloader"], desc=f"Epoch {epoch_i}"):
             student_id, exercise_id, knowledge_point, y = [
@@ -59,8 +73,24 @@ def train_only_loop(model, config):
             optimizer.step()
             model.monotonicity()
             epoch_losses.append(loss.item())
-        print(f"[{epoch_i:03d}/{config['epoch']}] Loss: {np.mean(epoch_losses):.4f}")
-    print("训练完成。请使用外部验证集进行评估。")
+        avg_loss = np.mean(epoch_losses)
+
+        if has_test:
+            auc, ap, acc, rmse, f1, doa = model.test_step()
+            print(f"[{epoch_i:03d}/{all_epoch}] | Loss: {avg_loss:.4f} | AUC: {auc:.4f} | "
+                  f"ACC: {acc:.4f} | RMSE: {rmse:.4f} | F1: {f1:.4f} | DOA@10: {doa:.4f}")
+            if auc > best_auc:
+                best_auc = auc
+        else:
+            print(f"[{epoch_i:03d}/{all_epoch}] Loss: {avg_loss:.4f}")
+
+    save_path = config.get("save_path")
+    if save_path:
+        torch.save(model.state_dict(), save_path)
+        print("模型已保存:", os.path.abspath(save_path))
+    if has_test:
+        print(f"Best AUC: {best_auc:.4f}")
+    print("训练完成。")
 
 
 def _ddp_entry(rank, world_size, config):
@@ -80,7 +110,7 @@ if __name__ == "__main__":
         config["train_data"] = train_data.to(config["device"])
         config["full_data"] = train_data.to(config["device"])
         model = DFCD(config)
-        train_only_loop(model, config)
+        train_with_test_loop(model, config)
     else:
         import torch.multiprocessing as mp
         config = run_config._build_config()

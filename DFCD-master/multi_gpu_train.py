@@ -223,4 +223,8 @@ def main_ddp(rank, world_size, config_template):
     elif rank == 0 and not has_test:
         print("训练完成。请使用外部验证集进行评估。")
 
+    if rank == 0 and config.get("save_path"):
+        torch.save(model.module.state_dict(), config["save_path"])
+        print("模型已保存:", os.path.abspath(config["save_path"]))
+
     cleanup()
