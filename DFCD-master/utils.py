@@ -89,13 +89,22 @@ def load_data_unified(config):
     set_seed(config['seed'])
     torch.set_default_dtype(config['dtype'])
 
-    # ---- 加载数据集参数 ----
+    # ---- 加载数据集参数（优先使用 data_params，加载后以实际数据维度为准） ----
     from data.data_params_dict import data_params
     config.update({
         'stu_num': data_params[config["data_type"]]['stu_num'],
         'prob_num': data_params[config["data_type"]]['prob_num'],
         'know_num': data_params[config["data_type"]]['know_num'],
     })
+
+    # ---- 加载 Q 矩阵（提前加载以校验维度） ----
+    q_np = pd.read_csv(f'../data/{config["data_type"]}/q.csv', header=None).to_numpy()
+    _n_exer, _n_know = q_np.shape[0], q_np.shape[1]
+    if _n_exer != config['prob_num'] or _n_know != config['know_num']:
+        config['prob_num'] = _n_exer
+        config['know_num'] = _n_know
+        print(f"[load_data] 以 q.csv 实际维度为准: 习题={_n_exer}, 知识点={_n_know}")
+
     print(f"[load_data] 数据集: {config['data_type']} | "
           f"学生: {config['stu_num']} | 习题: {config['prob_num']} | 知识点: {config['know_num']}")
 
@@ -109,13 +118,15 @@ def load_data_unified(config):
         config['e_embed'] = embeddings['exercise_embeddings']
         config['k_embed'] = embeddings['knowledge_embeddings']
 
-    # ---- 加载 Q 矩阵 ----
-    q_np = pd.read_csv(f'../data/{config["data_type"]}/q.csv', header=None).to_numpy()
     q_tensor = torch.tensor(q_np)
 
     # ---- 加载 TotalData ----
     np_data = pd.read_csv(f'../data/{config["data_type"]}/TotalData.csv', header=None).to_numpy()
     print(f"[load_data] 总记录数: {len(np_data)}")
+    _n_stu = int(np_data[:, 0].max()) + 1 if len(np_data) > 0 else 0
+    if _n_stu != config['stu_num']:
+        config['stu_num'] = _n_stu
+        print(f"[load_data] 以 TotalData 实际学生数为准: {_n_stu}")
 
     # ---- 构建 se_map: student_id -> {exer_id: embedding_index} ----
     TotalData = pd.DataFrame(np_data, columns=['stu', 'exer', 'answervalue'])
